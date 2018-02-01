@@ -1,3 +1,6 @@
 *.swp
 elm-stuff/*
 index.html
+
+# Travis CI Stuff
+sysconfcpus
