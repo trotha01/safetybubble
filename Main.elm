@@ -44,7 +44,7 @@ main =
 
 type alias Model =
     { bubble : Bubble
-    , sharpEnemies : List SharpEnemy
+    , enemies : List Enemy
     , powerups : List Powerup
     , window : Window.Size
     , time : Time
@@ -102,7 +102,7 @@ type alias BomberEnemy =
 init : ( Model, Cmd Msg )
 init =
     ( { bubble = initBubble
-      , sharpEnemies = []
+      , enemies = []
       , powerups = []
       , window = initWindow
       , time = 0
@@ -247,30 +247,78 @@ movePowerup time powerup =
 
 moveEnemies : Model -> Model
 moveEnemies model =
-    { model | sharpEnemies = List.map (moveEnemy model.time) model.sharpEnemies }
+    { model | enemies = List.map (moveEnemy model.time) model.enemies }
 
 
 removeHiddenPowerups : Model -> Model
 removeHiddenPowerups model =
-    { model | powerups = List.filter (\e -> not (Animation.isDone model.time e.animationX || Animation.isDone model.time e.animationY)) model.powerups }
+    { model | powerups = List.filter (isStillAnimating model.time) model.powerups }
 
 
 removeHiddenEnemies : Model -> Model
 removeHiddenEnemies model =
-    { model | sharpEnemies = List.filter (\e -> not (Animation.isDone model.time e.animationX || Animation.isDone model.time e.animationY)) model.sharpEnemies }
+    { model
+        | enemies =
+            List.filter
+                (\e ->
+                    case e of
+                        SharpE e ->
+                            -- keep if still moving
+                            isStillAnimating model.time e
 
-
-moveEnemy : Time -> SharpEnemy -> SharpEnemy
-moveEnemy time enemy =
-    { enemy
-        | pos =
-            vec2 (Animation.animate time enemy.animationX)
-                (Animation.animate time enemy.animationY)
+                        BomberE e ->
+                            -- keep if we're still within the explosion window
+                            -- (end animatino time + 5 seconds)
+                            (animationEndTime e + (2 * Time.second)) > model.time
+                )
+                model.enemies
     }
+
+
+type alias Animated a =
+    { a
+        | animationX : Animation
+        , animationY : Animation
+    }
+
+
+isStillAnimating : Time -> Animated a -> Bool
+isStillAnimating time animated =
+    not (Animation.isDone time animated.animationX)
+        || not (Animation.isDone time animated.animationY)
+
+
+animationEndTime : Animated a -> Time
+animationEndTime animated =
+    Basics.max (Animation.getStart animated.animationX + Animation.getDuration animated.animationX) (Animation.getStart animated.animationY + Animation.getDuration animated.animationY)
+
+
+moveEnemy : Time -> Enemy -> Enemy
+moveEnemy time enemy =
+    case enemy of
+        SharpE e ->
+            SharpE
+                { e
+                    | pos =
+                        vec2 (Animation.animate time e.animationX)
+                            (Animation.animate time e.animationY)
+                }
+
+        BomberE e ->
+            BomberE
+                { e
+                    | pos =
+                        vec2 (Animation.animate time e.animationX)
+                            (Animation.animate time e.animationY)
+                }
 
 
 sharpEnemySpeed =
     0.1
+
+
+powerupSpeed =
+    0.05
 
 
 generatePointOutsideWindow : ( Float, Float ) -> Random.Generator ( Float, Float )
@@ -298,6 +346,14 @@ generatePointOutsideWindow ( width, height ) =
         Random.bool
 
 
+generatePointInsideWindow : ( Float, Float ) -> Random.Generator ( Float, Float )
+generatePointInsideWindow ( width, height ) =
+    Random.map2
+        (,)
+        (Random.float 15 (width - 15))
+        (Random.float 15 (height - 15))
+
+
 generatePowerup : PowerupType -> Time -> Model -> Model
 generatePowerup powerupType time model =
     case powerupType of
@@ -314,8 +370,8 @@ generatePowerup powerupType time model =
 
                 newPowerup =
                     { pos = vec2 fromX fromY
-                    , animationX = animation model.time |> from fromX |> to toX |> speed sharpEnemySpeed
-                    , animationY = animation model.time |> from fromY |> to toY |> speed sharpEnemySpeed
+                    , animationX = animation model.time |> from fromX |> to toX |> speed powerupSpeed
+                    , animationY = animation model.time |> from fromY |> to toY |> speed powerupSpeed
                     }
             in
             { model
@@ -328,29 +384,61 @@ generateEnemy : EnemyType -> Time -> Model -> Model
 generateEnemy enemyType time model =
     case enemyType of
         Sharp ->
-            let
-                pointGen =
-                    generatePointOutsideWindow ( toFloat model.window.width, toFloat model.window.height )
-
-                ( ( fromX, fromY ), seed2 ) =
-                    Random.step pointGen model.seed
-
-                ( ( toX, toY ), seed3 ) =
-                    Random.step pointGen seed2
-
-                newEnemy =
-                    { pos = vec2 fromX fromY
-                    , animationX = animation model.time |> from fromX |> to toX |> speed sharpEnemySpeed
-                    , animationY = animation model.time |> from fromY |> to toY |> speed sharpEnemySpeed
-                    }
-            in
-            { model
-                | seed = seed3
-                , sharpEnemies = newEnemy :: model.sharpEnemies
-            }
+            generateSharpEnemy time model
 
         Bomber ->
-            model
+            generateBomberEnemy time model
+
+
+generateSharpEnemy : Time -> Model -> Model
+generateSharpEnemy time model =
+    let
+        pointGen =
+            generatePointOutsideWindow ( toFloat model.window.width, toFloat model.window.height )
+
+        ( ( fromX, fromY ), seed2 ) =
+            Random.step pointGen model.seed
+
+        ( ( toX, toY ), seed3 ) =
+            Random.step pointGen seed2
+
+        newEnemy =
+            { pos = vec2 fromX fromY
+            , animationX = animation model.time |> from fromX |> to toX |> speed sharpEnemySpeed
+            , animationY = animation model.time |> from fromY |> to toY |> speed sharpEnemySpeed
+            }
+    in
+    { model
+        | seed = seed3
+        , enemies = SharpE newEnemy :: model.enemies
+    }
+
+
+generateBomberEnemy : Time -> Model -> Model
+generateBomberEnemy time model =
+    let
+        outsidePointGen =
+            generatePointOutsideWindow ( toFloat model.window.width, toFloat model.window.height )
+
+        insidePointGen =
+            generatePointInsideWindow ( toFloat model.window.width, toFloat model.window.height )
+
+        ( ( fromX, fromY ), seed2 ) =
+            Random.step outsidePointGen model.seed
+
+        ( ( toX, toY ), seed3 ) =
+            Random.step insidePointGen seed2
+
+        newEnemy =
+            { pos = vec2 fromX fromY
+            , animationX = animation model.time |> from fromX |> to toX |> duration (5 * Time.second)
+            , animationY = animation model.time |> from fromY |> to toY |> duration (5 * Time.second)
+            }
+    in
+    { model
+        | seed = seed3
+        , enemies = BomberE newEnemy :: model.enemies
+    }
 
 
 
@@ -366,8 +454,8 @@ view model =
             , viewBox ("0 0 " ++ toString model.window.width ++ " " ++ toString model.window.height)
             ]
             [ viewBubble model.time model.bubble
-            , viewEnemies model.time model.sharpEnemies
             ]
+        , viewEnemies model.time model.enemies
         , viewHuman model.time model.bubble
         , viewPowerups model.time model.powerups
         ]
@@ -381,10 +469,10 @@ viewHuman : Time -> Bubble -> Html Msg
 viewHuman time bubble =
     let
         x =
-            getX bubble.pos
+            getX bubble.pos - (bubble.radius / 2)
 
         y =
-            getY bubble.pos
+            getY bubble.pos - (bubble.radius / 2)
     in
     div
         [ Html.Attributes.style
@@ -433,7 +521,8 @@ viewBubble time bubble =
 viewPowerups : Time -> List Powerup -> Html Msg
 viewPowerups time powerups =
     div
-        [ Html.Attributes.style
+        [ id "powerups"
+        , Html.Attributes.style
             [ ( "position", "absolute" )
             , ( "top", "0" )
             , ( "left", "0" )
@@ -461,34 +550,62 @@ viewPowerup time powerup =
             , ( "left", px <| getX powerup.pos )
             ]
         ]
-        [{--
-              rx (toString 10)
-            , ry (toString 10)
-            , fill "silver"
-            , stroke "black"
-            , fillOpacity "0.4"
-            , Svg.Attributes.filter "url(#f1)"
-            , transform <| "translate(" ++ toString (getX powerup.pos) ++ "," ++ toString (getY powerup.pos) ++ ")"
-            ]
-            []
-            --}
-        ]
+        []
 
 
-viewEnemies : Time -> List SharpEnemy -> Html Msg
+viewEnemies : Time -> List Enemy -> Html Msg
 viewEnemies time enemies =
-    g [] (List.map (viewSharpEnemy time) enemies)
+    div [ id "enemies" ] (List.map (viewEnemy time) enemies)
+
+
+viewEnemy : Time -> Enemy -> Html Msg
+viewEnemy time enemy =
+    case enemy of
+        SharpE e ->
+            viewSharpEnemy time e
+
+        BomberE e ->
+            viewBomberEnemy time e
+
+
+viewBomberEnemy : Time -> BomberEnemy -> Html Msg
+viewBomberEnemy time bomberEnemy =
+    let
+        boomClass =
+            if isStillAnimating time bomberEnemy then
+                ""
+            else
+                "countdown"
+    in
+    div
+        [ class <| "bomber " ++ boomClass
+        , Html.Attributes.style
+            [ ( "position", "absolute" )
+            , ( "top", px <| getY bomberEnemy.pos )
+            , ( "left", px <| getX bomberEnemy.pos )
+            ]
+        ]
+        [ Html.text "💣" ]
 
 
 viewSharpEnemy : Time -> SharpEnemy -> Html Msg
 viewSharpEnemy time sharpEnemy =
-    path
-        [ Svg.Attributes.d "M29.181 19.070c-1.679-2.908-0.669-6.634 2.255-8.328l-3.145-5.447c-0.898 0.527-1.943 0.829-3.058 0.829-3.361 0-6.085-2.742-6.085-6.125h-6.289c0.008 1.044-0.252 2.103-0.811 3.070-1.679 2.908-5.411 3.897-8.339 2.211l-3.144 5.447c0.905 0.515 1.689 1.268 2.246 2.234 1.676 2.903 0.672 6.623-2.241 8.319l3.145 5.447c0.895-0.522 1.935-0.82 3.044-0.82 3.35 0 6.067 2.725 6.084 6.092h6.289c-0.003-1.034 0.259-2.080 0.811-3.038 1.676-2.903 5.399-3.894 8.325-2.219l3.145-5.447c-0.899-0.515-1.678-1.266-2.232-2.226zM16 22.479c-3.578 0-6.479-2.901-6.479-6.479s2.901-6.479 6.479-6.479c3.578 0 6.479 2.901 6.479 6.479s-2.901 6.479-6.479 6.479z"
-        , transform <| "translate(" ++ toString (getX sharpEnemy.pos) ++ "," ++ toString (getY sharpEnemy.pos) ++ ")"
-        , fill "red"
-        , stroke "darkred"
+    div
+        [ Html.Attributes.style
+            [ ( "position", "absolute" )
+            , ( "top", px <| getY sharpEnemy.pos )
+            , ( "left", px <| getX sharpEnemy.pos )
+            ]
         ]
-        []
+        [ svg []
+            [ path
+                [ Svg.Attributes.d "M29.181 19.070c-1.679-2.908-0.669-6.634 2.255-8.328l-3.145-5.447c-0.898 0.527-1.943 0.829-3.058 0.829-3.361 0-6.085-2.742-6.085-6.125h-6.289c0.008 1.044-0.252 2.103-0.811 3.070-1.679 2.908-5.411 3.897-8.339 2.211l-3.144 5.447c0.905 0.515 1.689 1.268 2.246 2.234 1.676 2.903 0.672 6.623-2.241 8.319l3.145 5.447c0.895-0.522 1.935-0.82 3.044-0.82 3.35 0 6.067 2.725 6.084 6.092h6.289c-0.003-1.034 0.259-2.080 0.811-3.038 1.676-2.903 5.399-3.894 8.325-2.219l3.145-5.447c-0.899-0.515-1.678-1.266-2.232-2.226zM16 22.479c-3.578 0-6.479-2.901-6.479-6.479s2.901-6.479 6.479-6.479c3.578 0 6.479 2.901 6.479 6.479s-2.901 6.479-6.479 6.479z"
+                , fill "red"
+                , stroke "darkred"
+                ]
+                []
+            ]
+        ]
 
 
 px : Float -> String
@@ -520,7 +637,8 @@ subscriptions model =
 
 enemyGenerator : Model -> List (Sub Msg)
 enemyGenerator model =
-    [ Time.every (Time.second * 0.4) (GenerateEnemy Sharp)
+    [ -- Time.every (Time.second * 2) (GenerateEnemy Sharp)
+      Time.every (Time.second * 5) (GenerateEnemy Bomber)
     ]
 
 
