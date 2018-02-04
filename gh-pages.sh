@@ -2,11 +2,11 @@
 set -e
 
 # compile
-elm make Main.elm --yes --output index.html
+elm make Main.elm --yes --output=elm.js
 
-# remove index.html from .gitignore
+# remove elm.js from .gitignore
 # compatible with both GNU and BSD/Mac sed
-sed -i.bak '/index.html/d' .gitignore
+sed -i.bak '/elm.js/d' .gitignore
 rm .gitignore.bak
 
 echo "ls"

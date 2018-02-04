@@ -12,7 +12,7 @@ import Mouse
 import Random
 import Random.Extra as Random
 import Svg exposing (..)
-import Svg.Attributes exposing (cx, cy, fill, fillOpacity, points, rx, ry, stroke, transform, viewBox, x, xlinkHref, y)
+import Svg.Attributes exposing (cx, cy, dx, dy, fill, fillOpacity, in_, mode, points, result, rx, ry, stdDeviation, stroke, transform, viewBox, x, xlinkHref, y)
 import Task
 import Time exposing (..)
 import Window
@@ -45,6 +45,7 @@ main =
 type alias Model =
     { bubble : Bubble
     , sharpEnemies : List SharpEnemy
+    , powerups : List Powerup
     , window : Window.Size
     , time : Time
     , pause : Bool
@@ -57,6 +58,18 @@ type alias Bubble =
     , vel : Float
     , acc : Float
     , radius : Float
+    , animationX : Animation
+    , animationY : Animation
+    , powerups : List PowerupType
+    }
+
+
+type PowerupType
+    = MetalBubble
+
+
+type alias Powerup =
+    { pos : Vec2
     , animationX : Animation
     , animationY : Animation
     }
@@ -90,6 +103,7 @@ init : ( Model, Cmd Msg )
 init =
     ( { bubble = initBubble
       , sharpEnemies = []
+      , powerups = []
       , window = initWindow
       , time = 0
       , pause = False
@@ -106,6 +120,7 @@ initBubble =
     , radius = 20
     , animationX = animation 0
     , animationY = animation 0
+    , powerups = []
     }
 
 
@@ -120,6 +135,7 @@ initWindow =
 type Msg
     = Click Mouse.Position
     | GenerateEnemy EnemyType Time
+    | GeneratePowerup PowerupType Time
     | Tick Time
     | WindowResize Window.Size
     | KeyPress Keyboard.KeyCode
@@ -139,7 +155,9 @@ update msg model =
                 |> updateTime delta
                 |> animateBubble
                 |> moveEnemies
+                |> movePowerups
                 |> removeHiddenEnemies
+                |> removeHiddenPowerups
             , Cmd.none
             )
 
@@ -148,6 +166,9 @@ update msg model =
 
         GenerateEnemy enemyType time ->
             ( generateEnemy enemyType time model, Cmd.none )
+
+        GeneratePowerup powerup time ->
+            ( generatePowerup powerup time model, Cmd.none )
 
 
 updateTime : Time -> Model -> Model
@@ -210,9 +231,28 @@ moveTo pos time bubble =
     }
 
 
+movePowerups : Model -> Model
+movePowerups model =
+    { model | powerups = List.map (movePowerup model.time) model.powerups }
+
+
+movePowerup : Time -> Powerup -> Powerup
+movePowerup time powerup =
+    { powerup
+        | pos =
+            vec2 (Animation.animate time powerup.animationX)
+                (Animation.animate time powerup.animationY)
+    }
+
+
 moveEnemies : Model -> Model
 moveEnemies model =
     { model | sharpEnemies = List.map (moveEnemy model.time) model.sharpEnemies }
+
+
+removeHiddenPowerups : Model -> Model
+removeHiddenPowerups model =
+    { model | powerups = List.filter (\e -> not (Animation.isDone model.time e.animationX || Animation.isDone model.time e.animationY)) model.powerups }
 
 
 removeHiddenEnemies : Model -> Model
@@ -256,6 +296,32 @@ generatePointOutsideWindow ( width, height ) =
         )
         Random.bool
         Random.bool
+
+
+generatePowerup : PowerupType -> Time -> Model -> Model
+generatePowerup powerupType time model =
+    case powerupType of
+        MetalBubble ->
+            let
+                pointGen =
+                    generatePointOutsideWindow ( toFloat model.window.width, toFloat model.window.height )
+
+                ( ( fromX, fromY ), seed2 ) =
+                    Random.step pointGen model.seed
+
+                ( ( toX, toY ), seed3 ) =
+                    Random.step pointGen seed2
+
+                newPowerup =
+                    { pos = vec2 fromX fromY
+                    , animationX = animation model.time |> from fromX |> to toX |> speed sharpEnemySpeed
+                    , animationY = animation model.time |> from fromY |> to toY |> speed sharpEnemySpeed
+                    }
+            in
+            { model
+                | seed = seed3
+                , powerups = newPowerup :: model.powerups
+            }
 
 
 generateEnemy : EnemyType -> Time -> Model -> Model
@@ -303,6 +369,7 @@ view model =
             , viewEnemies model.time model.sharpEnemies
             ]
         , viewHuman model.time model.bubble
+        , viewPowerups model.time model.powerups
         ]
 
 
@@ -314,10 +381,10 @@ viewHuman : Time -> Bubble -> Html Msg
 viewHuman time bubble =
     let
         x =
-            getX bubble.pos - (bubble.radius / 2)
+            getX bubble.pos
 
         y =
-            getY bubble.pos - (bubble.radius / 2)
+            getY bubble.pos
     in
     div
         [ Html.Attributes.style
@@ -363,6 +430,51 @@ viewBubble time bubble =
         ]
 
 
+viewPowerups : Time -> List Powerup -> Html Msg
+viewPowerups time powerups =
+    div
+        [ Html.Attributes.style
+            [ ( "position", "absolute" )
+            , ( "top", "0" )
+            , ( "left", "0" )
+            , ( "height", "100%" )
+            , ( "width", "100%" )
+            ]
+        ]
+        (List.map (viewPowerup time) powerups)
+
+
+viewPowerup : Time -> Powerup -> Html Msg
+viewPowerup time powerup =
+    div
+        [ class "metal"
+        , Html.Attributes.style
+            [ ( "border-radius", "50%" )
+            , ( "border", "1px solid black" )
+            , ( "height", "20px" )
+            , ( "width", "20px" )
+            , ( "background-color", "silver" )
+            , ( "opacity", "0.7" )
+            , ( "position", "absolute" )
+            , ( "box-shadow", "0px 0px 5px 10px #8ce3ff" )
+            , ( "top", px <| getY powerup.pos )
+            , ( "left", px <| getX powerup.pos )
+            ]
+        ]
+        [{--
+              rx (toString 10)
+            , ry (toString 10)
+            , fill "silver"
+            , stroke "black"
+            , fillOpacity "0.4"
+            , Svg.Attributes.filter "url(#f1)"
+            , transform <| "translate(" ++ toString (getX powerup.pos) ++ "," ++ toString (getY powerup.pos) ++ ")"
+            ]
+            []
+            --}
+        ]
+
+
 viewEnemies : Time -> List SharpEnemy -> Html Msg
 viewEnemies time enemies =
     g [] (List.map (viewSharpEnemy time) enemies)
@@ -402,6 +514,7 @@ subscriptions model =
              , Keyboard.presses KeyPress
              ]
                 ++ enemyGenerator model
+                ++ powerupGenerator model
             )
 
 
@@ -409,3 +522,8 @@ enemyGenerator : Model -> List (Sub Msg)
 enemyGenerator model =
     [ Time.every (Time.second * 0.4) (GenerateEnemy Sharp)
     ]
+
+
+powerupGenerator : Model -> List (Sub Msg)
+powerupGenerator model =
+    [ Time.every (Time.second * 5) (GeneratePowerup MetalBubble) ]
