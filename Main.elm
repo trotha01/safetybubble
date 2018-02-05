@@ -16,12 +16,12 @@ import Svg exposing (..)
 import Svg.Attributes exposing (cx, cy, dx, dy, fill, fillOpacity, in_, mode, points, result, rx, ry, stdDeviation, stroke, transform, viewBox, x, xlinkHref, y)
 import Task
 import Time exposing (..)
+import Tuple
 import Window
 
 
 {-| Next Steps
 
-  - Add in sharp enemy collision detection
   - Add in bomb enemy collision detection
   - Better mouse interruptions
   - Allow touch devises
@@ -59,9 +59,13 @@ type alias Bubble =
     , radius : Float
     , animationX : Animation
     , animationY : Animation
-    , powerups : List PowerupType
+    , powerups : List ( StartTime, PowerupType )
     , health : Int
     }
+
+
+type alias StartTime =
+    Time.Time
 
 
 type PowerupType
@@ -158,6 +162,7 @@ update msg model =
         Tick delta ->
             ( model
                 |> updateTime delta
+                |> timeoutPowerups
                 |> animateBubble
                 |> moveEnemies
                 |> movePowerups
@@ -296,6 +301,7 @@ checkPowerupCollisions model =
         collidingPowerupNames =
             collidingPowerups
                 |> List.map .type_
+                |> List.map ((,) model.time)
 
         newBubble =
             { bubble
@@ -323,6 +329,22 @@ areCirclesColliding c1 c2 =
             c1.radius + c2.radius
     in
     dist < rad
+
+
+timeoutPowerups : Model -> Model
+timeoutPowerups model =
+    let
+        bubble =
+            model.bubble
+
+        isPowerupValid ( startTime, powerup ) =
+            -- Powerups are valid for 5 seconds
+            startTime + (5 * Time.second) > model.time
+
+        newBubble =
+            { bubble | powerups = List.filter isPowerupValid bubble.powerups }
+    in
+    { model | bubble = newBubble }
 
 
 removeHiddenPowerups : Model -> Model
@@ -579,7 +601,7 @@ viewBubble time bubble =
             bubble.radius + (baseStretch * velocityY)
 
         bubbleClass =
-            if List.any ((==) MetalBubble) bubble.powerups then
+            if List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups then
                 "metalBubble"
             else
                 "bubble"
