@@ -60,6 +60,7 @@ type alias Bubble =
     , animationX : Animation
     , animationY : Animation
     , powerups : List PowerupType
+    , health : Int
     }
 
 
@@ -90,6 +91,7 @@ type alias SharpEnemy =
     { pos : Vec2
     , animationX : Animation
     , animationY : Animation
+    , radius : Float
     }
 
 
@@ -97,6 +99,7 @@ type alias BomberEnemy =
     { pos : Vec2
     , animationX : Animation
     , animationY : Animation
+    , radius : Float
     }
 
 
@@ -122,6 +125,7 @@ initBubble =
     , animationX = animation 0
     , animationY = animation 0
     , powerups = []
+    , health = 100
     }
 
 
@@ -160,6 +164,7 @@ update msg model =
                 |> removeHiddenEnemies
                 |> removeHiddenPowerups
                 |> checkPowerupCollisions
+                |> checkEnemyCollisions
             , Cmd.none
             )
 
@@ -250,6 +255,33 @@ movePowerup time powerup =
 moveEnemies : Model -> Model
 moveEnemies model =
     { model | enemies = List.map (moveEnemy model.time) model.enemies }
+
+
+checkEnemyCollisions : Model -> Model
+checkEnemyCollisions model =
+    let
+        bubble =
+            model.bubble
+
+        ( collidingEnemies, nonCollidingEnemies ) =
+            List.partition
+                (\e ->
+                    case e of
+                        SharpE e ->
+                            areCirclesColliding bubble e
+
+                        BomberE e ->
+                            areCirclesColliding bubble e
+                )
+                model.enemies
+
+        newBubble =
+            { bubble
+                | health =
+                    bubble.health - List.length collidingEnemies
+            }
+    in
+    { model | bubble = newBubble, enemies = nonCollidingEnemies }
 
 
 checkPowerupCollisions : Model -> Model
@@ -451,6 +483,7 @@ generateSharpEnemy time model =
             { pos = vec2 fromX fromY
             , animationX = animation model.time |> from fromX |> to toX |> speed sharpEnemySpeed
             , animationY = animation model.time |> from fromY |> to toY |> speed sharpEnemySpeed
+            , radius = 20
             }
     in
     { model
@@ -478,6 +511,7 @@ generateBomberEnemy time model =
             { pos = vec2 fromX fromY
             , animationX = animation model.time |> from fromX |> to toX |> duration (5 * Time.second)
             , animationY = animation model.time |> from fromY |> to toY |> duration (5 * Time.second)
+            , radius = 20
             }
     in
     { model
@@ -493,7 +527,8 @@ generateBomberEnemy time model =
 view : Model -> Html Msg
 view model =
     div []
-        [ viewPlayer model.time model.bubble
+        [ viewHealthbar model.bubble
+        , viewPlayer model.time model.bubble
         , viewEnemies model.time model.enemies
         , viewPowerups model.time model.powerups
         ]
@@ -501,6 +536,11 @@ view model =
 
 baseStretch =
     6
+
+
+viewHealthbar : Bubble -> Html Msg
+viewHealthbar bubble =
+    div [ class "healthbar", Html.Attributes.style [ ( "background", "linear-gradient(270deg, red, red " ++ toString bubble.health ++ "%, white " ++ toString bubble.health ++ "%)" ) ] ] []
 
 
 viewPlayer : Time -> Bubble -> Html Msg
