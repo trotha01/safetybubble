@@ -12,8 +12,6 @@ import Math.Vector2 exposing (..)
 import Mouse
 import Random
 import Random.Extra as Random
-import Svg exposing (..)
-import Svg.Attributes exposing (cx, cy, dx, dy, fill, fillOpacity, in_, mode, points, result, rx, ry, stdDeviation, stroke, transform, viewBox, x, xlinkHref, y)
 import Task
 import Time exposing (..)
 import Tuple
@@ -22,7 +20,9 @@ import Window
 
 {-| Next Steps
 
+  - Make bubble slower when metal
   - Add in bomb enemy collision detection
+  - Better bubble stretch and squeeze
   - Better mouse interruptions
   - Allow touch devises
   - Allow keyboard
@@ -162,7 +162,6 @@ update msg model =
         Tick delta ->
             ( model
                 |> updateTime delta
-                |> timeoutPowerups
                 |> animateBubble
                 |> moveEnemies
                 |> movePowerups
@@ -170,6 +169,7 @@ update msg model =
                 |> removeHiddenPowerups
                 |> checkPowerupCollisions
                 |> checkEnemyCollisions
+                |> timeoutPowerups
             , Cmd.none
             )
 
@@ -681,6 +681,7 @@ viewBomberEnemy time bomberEnemy =
             [ ( "position", "absolute" )
             , ( "top", px <| getY bomberEnemy.pos )
             , ( "left", px <| getX bomberEnemy.pos )
+            , ( "font-size", "2em" )
             ]
         ]
         [ Html.text "💣" ]
@@ -688,22 +689,40 @@ viewBomberEnemy time bomberEnemy =
 
 viewSharpEnemy : Time -> SharpEnemy -> Html Msg
 viewSharpEnemy time sharpEnemy =
+    let
+        ( p1x, p1y ) =
+            ( Animation.getFrom sharpEnemy.animationX
+            , Animation.getFrom sharpEnemy.animationY
+            )
+
+        ( p2x, p2y ) =
+            ( Animation.getTo sharpEnemy.animationX
+            , Animation.getTo sharpEnemy.animationY
+            )
+
+        directionVector =
+            Math.Vector2.direction (vec2 p1x p1y) (vec2 p2x p2y)
+
+        vectorAngle =
+            atan2 (Math.Vector2.getY directionVector) (Math.Vector2.getX directionVector)
+
+        correction =
+            -- we add a correct to the angle since the emoji sword is already angled
+            0.6
+
+        direction =
+            vectorAngle + correction
+    in
     div
         [ Html.Attributes.style
             [ ( "position", "absolute" )
             , ( "top", px <| getY sharpEnemy.pos )
             , ( "left", px <| getX sharpEnemy.pos )
+            , ( "font-size", "2em" )
+            , ( "transform", "rotate(" ++ toString direction ++ "rad)" )
             ]
         ]
-        [ svg []
-            [ path
-                [ Svg.Attributes.d "M29.181 19.070c-1.679-2.908-0.669-6.634 2.255-8.328l-3.145-5.447c-0.898 0.527-1.943 0.829-3.058 0.829-3.361 0-6.085-2.742-6.085-6.125h-6.289c0.008 1.044-0.252 2.103-0.811 3.070-1.679 2.908-5.411 3.897-8.339 2.211l-3.144 5.447c0.905 0.515 1.689 1.268 2.246 2.234 1.676 2.903 0.672 6.623-2.241 8.319l3.145 5.447c0.895-0.522 1.935-0.82 3.044-0.82 3.35 0 6.067 2.725 6.084 6.092h6.289c-0.003-1.034 0.259-2.080 0.811-3.038 1.676-2.903 5.399-3.894 8.325-2.219l3.145-5.447c-0.899-0.515-1.678-1.266-2.232-2.226zM16 22.479c-3.578 0-6.479-2.901-6.479-6.479s2.901-6.479 6.479-6.479c3.578 0 6.479 2.901 6.479 6.479s-2.901 6.479-6.479 6.479z"
-                , fill "red"
-                , stroke "darkred"
-                ]
-                []
-            ]
-        ]
+        [ Html.text "🗡️" ]
 
 
 px : Float -> String
