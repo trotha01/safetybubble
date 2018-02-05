@@ -7,6 +7,7 @@ import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Keyboard
+import List.Extra
 import Math.Vector2 exposing (..)
 import Mouse
 import Random
@@ -20,13 +21,11 @@ import Window
 
 {-| Next Steps
 
-  - Add in collision detection
-  - Make bubble look like a bubble with something inside
-  - Fix enemy dissapearing
+  - Add in sharp enemy collision detection
+  - Add in bomb enemy collision detection
   - Better mouse interruptions
   - Allow touch devises
   - Allow keyboard
-  - Add powerups
 
 -}
 main =
@@ -70,8 +69,10 @@ type PowerupType
 
 type alias Powerup =
     { pos : Vec2
+    , radius : Float
     , animationX : Animation
     , animationY : Animation
+    , type_ : PowerupType
     }
 
 
@@ -117,7 +118,7 @@ initBubble =
     { pos = vec2 50 50
     , vel = 0
     , acc = 0
-    , radius = 20
+    , radius = 30
     , animationX = animation 0
     , animationY = animation 0
     , powerups = []
@@ -158,6 +159,7 @@ update msg model =
                 |> movePowerups
                 |> removeHiddenEnemies
                 |> removeHiddenPowerups
+                |> checkPowerupCollisions
             , Cmd.none
             )
 
@@ -248,6 +250,47 @@ movePowerup time powerup =
 moveEnemies : Model -> Model
 moveEnemies model =
     { model | enemies = List.map (moveEnemy model.time) model.enemies }
+
+
+checkPowerupCollisions : Model -> Model
+checkPowerupCollisions model =
+    let
+        bubble =
+            model.bubble
+
+        ( collidingPowerups, nonCollidingPowerups ) =
+            List.partition (areCirclesColliding bubble) model.powerups
+
+        collidingPowerupNames =
+            collidingPowerups
+                |> List.map .type_
+
+        newBubble =
+            { bubble
+                | powerups =
+                    (collidingPowerupNames ++ bubble.powerups)
+                        |> List.Extra.uniqueBy toString
+            }
+    in
+    { model | bubble = newBubble, powerups = nonCollidingPowerups }
+
+
+type alias CollidableCircle a =
+    { a | radius : Float, pos : Vec2 }
+
+
+areCirclesColliding : CollidableCircle a -> CollidableCircle b -> Bool
+areCirclesColliding c1 c2 =
+    let
+        dist =
+            Math.Vector2.sub c1.pos c2.pos
+                |> Math.Vector2.lengthSquared
+                |> sqrt
+
+        rad =
+            c1.radius + c2.radius
+    in
+    dist < rad
 
 
 removeHiddenPowerups : Model -> Model
@@ -370,8 +413,10 @@ generatePowerup powerupType time model =
 
                 newPowerup =
                     { pos = vec2 fromX fromY
+                    , radius = 20
                     , animationX = animation model.time |> from fromX |> to toX |> speed powerupSpeed
                     , animationY = animation model.time |> from fromY |> to toY |> speed powerupSpeed
+                    , type_ = MetalBubble
                     }
             in
             { model
@@ -448,15 +493,8 @@ generateBomberEnemy time model =
 view : Model -> Html Msg
 view model =
     div []
-        [ svg
-            [ width model.window.width
-            , height model.window.height
-            , viewBox ("0 0 " ++ toString model.window.width ++ " " ++ toString model.window.height)
-            ]
-            [ viewBubble model.time model.bubble
-            ]
+        [ viewPlayer model.time model.bubble
         , viewEnemies model.time model.enemies
-        , viewHuman model.time model.bubble
         , viewPowerups model.time model.powerups
         ]
 
@@ -465,28 +503,24 @@ baseStretch =
     6
 
 
-viewHuman : Time -> Bubble -> Html Msg
-viewHuman time bubble =
-    let
-        x =
-            getX bubble.pos - (bubble.radius / 2)
-
-        y =
-            getY bubble.pos - (bubble.radius / 2)
-    in
+viewPlayer : Time -> Bubble -> Html Msg
+viewPlayer time bubble =
     div
-        [ Html.Attributes.style
+        [ class "player"
+        , Html.Attributes.style
             [ ( "position", "absolute" )
-            , ( "width", "20px" )
-            , ( "height", "22px" )
-            , ( "left", px x )
-            , ( "top", px y )
-            , ( "background-image", "url('daftman-sprite.jpg')" )
-            , ( "background-position", "-127px -9px" )
-            , ( "z-index", "-1" )
+            , ( "top", px <| getY bubble.pos )
+            , ( "left", px <| getX bubble.pos )
             ]
         ]
-        []
+        [ viewBubble time bubble
+        , viewHuman time bubble
+        ]
+
+
+viewHuman : Time -> Bubble -> Html Msg
+viewHuman time bubble =
+    div [ class "human" ] []
 
 
 viewBubble : Time -> Bubble -> Html Msg
@@ -503,19 +537,21 @@ viewBubble time bubble =
 
         yRadius =
             bubble.radius + (baseStretch * velocityY)
+
+        bubbleClass =
+            if List.any ((==) MetalBubble) bubble.powerups then
+                "metalBubble"
+            else
+                "bubble"
     in
-    g
-        [ transform <| "translate(" ++ (toString <| getX bubble.pos) ++ "," ++ (toString <| getY bubble.pos) ++ ")"
-        ]
-        [ ellipse
-            [ rx (toString xRadius)
-            , ry (toString yRadius)
-            , fill "lightblue"
-            , stroke "blue"
-            , fillOpacity "0.4"
+    div
+        [ class bubbleClass
+        , Html.Attributes.style
+            [ ( "height", px yRadius )
+            , ( "width", px xRadius )
             ]
-            []
         ]
+        []
 
 
 viewPowerups : Time -> List Powerup -> Html Msg
@@ -540,8 +576,8 @@ viewPowerup time powerup =
         , Html.Attributes.style
             [ ( "border-radius", "50%" )
             , ( "border", "1px solid black" )
-            , ( "height", "20px" )
-            , ( "width", "20px" )
+            , ( "height", px powerup.radius )
+            , ( "width", px powerup.radius )
             , ( "background-color", "silver" )
             , ( "opacity", "0.7" )
             , ( "position", "absolute" )
@@ -637,8 +673,8 @@ subscriptions model =
 
 enemyGenerator : Model -> List (Sub Msg)
 enemyGenerator model =
-    [ -- Time.every (Time.second * 2) (GenerateEnemy Sharp)
-      Time.every (Time.second * 5) (GenerateEnemy Bomber)
+    [ Time.every (Time.second * 2) (GenerateEnemy Sharp)
+    , Time.every (Time.second * 5) (GenerateEnemy Bomber)
     ]
 
 
