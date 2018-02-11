@@ -20,12 +20,12 @@ import Window
 
 {-| Next Steps
 
-  - Make bubble slower when metal
   - Add in bomb enemy collision detection
   - Better bubble stretch and squeeze
   - Better mouse interruptions
   - Allow touch devises
   - Allow keyboard
+  - Fix bubble speedup when metal stops
 
 -}
 main =
@@ -49,13 +49,13 @@ type alias Model =
     , time : Time
     , pause : Bool
     , seed : Random.Seed
+    , isGameOver : Bool
     }
 
 
 type alias Bubble =
     { pos : Vec2
-    , vel : Float
-    , acc : Float
+    , speed : Float
     , radius : Float
     , animationX : Animation
     , animationY : Animation
@@ -109,27 +109,32 @@ type alias BomberEnemy =
 
 init : ( Model, Cmd Msg )
 init =
-    ( { bubble = initBubble
+    ( { bubble = initBubble 0 0
       , enemies = []
       , powerups = []
       , window = initWindow
       , time = 0
       , pause = False
       , seed = Random.initialSeed 0
+      , isGameOver = False
       }
-    , Task.perform WindowResize Window.size
+    , Task.perform InitialWindowSize Window.size
     )
 
 
-initBubble =
-    { pos = vec2 50 50
-    , vel = 0
-    , acc = 0
+initialBubbleHealth =
+    10
+
+
+initBubble : Float -> Float -> Bubble
+initBubble x y =
+    { pos = vec2 x y
+    , speed = 0.5
     , radius = 30
-    , animationX = animation 0
-    , animationY = animation 0
+    , animationX = animation x |> from x |> to x
+    , animationY = animation y |> from y |> to y
     , powerups = []
-    , health = 100
+    , health = initialBubbleHealth
     }
 
 
@@ -146,13 +151,18 @@ type Msg
     | GenerateEnemy EnemyType Time
     | GeneratePowerup PowerupType Time
     | Tick Time
+    | InitialWindowSize Window.Size
     | WindowResize Window.Size
     | KeyPress Keyboard.KeyCode
+    | StartGame
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        StartGame ->
+            init
+
         Click pos ->
             ( moveBubble pos model, Cmd.none )
 
@@ -170,8 +180,16 @@ update msg model =
                 |> checkPowerupCollisions
                 |> checkEnemyCollisions
                 |> timeoutPowerups
+                |> checkGameOver
             , Cmd.none
             )
+
+        InitialWindowSize size ->
+            let
+                bubbleFromPos pos =
+                    initBubble (toFloat (size.width // 2)) (toFloat (size.height // 2))
+            in
+            ( { model | window = size, bubble = bubbleFromPos size }, Cmd.none )
 
         WindowResize size ->
             ( { model | window = size }, Cmd.none )
@@ -209,10 +227,6 @@ animateBubble model =
     { model | bubble = newBubble }
 
 
-bubbleSpeed =
-    0.5
-
-
 moveTo : Mouse.Position -> Time -> Bubble -> Bubble
 moveTo pos time bubble =
     {-
@@ -229,6 +243,13 @@ moveTo pos time bubble =
               }
           else
     -}
+    let
+        bubbleSpeed =
+            if List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups then
+                0.1
+            else
+                0.5
+    in
     { bubble
         | animationX =
             animation time
@@ -283,10 +304,18 @@ checkEnemyCollisions model =
         newBubble =
             { bubble
                 | health =
-                    bubble.health - List.length collidingEnemies
+                    if isBubbleMetal bubble then
+                        bubble.health
+                    else
+                        bubble.health - List.length collidingEnemies
             }
     in
     { model | bubble = newBubble, enemies = nonCollidingEnemies }
+
+
+isBubbleMetal : Bubble -> Bool
+isBubbleMetal bubble =
+    List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups
 
 
 checkPowerupCollisions : Model -> Model
@@ -329,6 +358,14 @@ areCirclesColliding c1 c2 =
             c1.radius + c2.radius
     in
     dist < rad
+
+
+checkGameOver : Model -> Model
+checkGameOver model =
+    if model.bubble.health <= 0 then
+        { model | isGameOver = True, pause = True }
+    else
+        model
 
 
 timeoutPowerups : Model -> Model
@@ -548,21 +585,39 @@ generateBomberEnemy time model =
 
 view : Model -> Html Msg
 view model =
-    div []
-        [ viewHealthbar model.bubble
-        , viewPlayer model.time model.bubble
-        , viewEnemies model.time model.enemies
-        , viewPowerups model.time model.powerups
-        ]
+    if model.isGameOver then
+        viewGameOverScreen model
+    else
+        div []
+            [ viewHealthbar model.bubble
+            , viewPlayer model.time model.bubble
+            , viewEnemies model.time model.enemies
+            , viewPowerups model.time model.powerups
+            ]
 
 
 baseStretch =
     6
 
 
+viewGameOverScreen : Model -> Html Msg
+viewGameOverScreen model =
+    div []
+        [ div [ class "gameover" ]
+            [ h1 [] [ text "You Died" ]
+            , button [ onClick StartGame ] [ text "Try Again!" ]
+            ]
+        ]
+
+
 viewHealthbar : Bubble -> Html Msg
 viewHealthbar bubble =
-    div [ class "healthbar", Html.Attributes.style [ ( "background", "linear-gradient(270deg, red, red " ++ toString bubble.health ++ "%, white " ++ toString bubble.health ++ "%)" ) ] ] []
+    let
+        healthPercent =
+            ((toFloat bubble.health / toFloat initialBubbleHealth) * 100)
+                |> toString
+    in
+    div [ class "healthbar", Html.Attributes.style [ ( "background", "linear-gradient(270deg, red, red " ++ healthPercent ++ "%, white " ++ healthPercent ++ "%)" ) ] ] []
 
 
 viewPlayer : Time -> Bubble -> Html Msg
@@ -736,7 +791,7 @@ px x =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    if model.pause then
+    if model.pause || model.isGameOver then
         Sub.batch
             [ Keyboard.presses KeyPress
             ]
@@ -754,7 +809,7 @@ subscriptions model =
 
 enemyGenerator : Model -> List (Sub Msg)
 enemyGenerator model =
-    [ Time.every (Time.second * 2) (GenerateEnemy Sharp)
+    [ Time.every (Time.second * 0.5) (GenerateEnemy Sharp)
     , Time.every (Time.second * 5) (GenerateEnemy Bomber)
     ]
 
