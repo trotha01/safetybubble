@@ -21,9 +21,10 @@ import Window
 {-| Next Steps
 
   - Add in bomb enemy collision detection
+  - Add in sound effects
   - Better bubble stretch and squeeze
   - Better mouse interruptions
-  - Allow touch devises
+  - Allow touch devices
   - Allow keyboard
   - Fix bubble speedup when metal stops
 
@@ -61,6 +62,9 @@ type alias Bubble =
     , animationY : Animation
     , powerups : List ( StartTime, PowerupType )
     , health : Int
+    , direction : Float
+    , velocityX : Float
+    , velocityY : Float
     }
 
 
@@ -135,6 +139,9 @@ initBubble x y =
     , animationY = animation y |> from y |> to y
     , powerups = []
     , health = initialBubbleHealth
+    , direction = 0
+    , velocityX = 0
+    , velocityY = 0
     }
 
 
@@ -223,8 +230,20 @@ animateBubble model =
                     vec2 (Animation.animate model.time bubble.animationX)
                         (Animation.animate model.time bubble.animationY)
             }
+
+        velocityX =
+            Animation.velocity model.time newBubble.animationX
+
+        velocityY =
+            Animation.velocity model.time newBubble.animationY
+
+        direction =
+            atan2 velocityY velocityX
+
+        newBubble2 =
+            { newBubble | direction = direction, velocityX = velocityX, velocityY = velocityY }
     in
-    { model | bubble = newBubble }
+    { model | bubble = newBubble2 }
 
 
 moveTo : Mouse.Position -> Time -> Bubble -> Bubble
@@ -597,7 +616,7 @@ view model =
 
 
 baseStretch =
-    6
+    10
 
 
 viewGameOverScreen : Model -> Html Msg
@@ -643,17 +662,14 @@ viewHuman time bubble =
 viewBubble : Time -> Bubble -> Html Msg
 viewBubble time bubble =
     let
-        velocityX =
-            abs <| Animation.velocity time bubble.animationX
-
-        velocityY =
-            abs <| Animation.velocity time bubble.animationY
+        stretch =
+            baseStretch * (abs bubble.velocityY + abs bubble.velocityX / 2)
 
         xRadius =
-            bubble.radius + (baseStretch * velocityX)
+            bubble.radius + stretch
 
         yRadius =
-            bubble.radius + (baseStretch * velocityY)
+            bubble.radius
 
         bubbleClass =
             if List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups then
@@ -666,6 +682,7 @@ viewBubble time bubble =
         , Html.Attributes.style
             [ ( "height", px yRadius )
             , ( "width", px xRadius )
+            , ( "transform", "rotate(" ++ toString bubble.direction ++ "rad)" )
             ]
         ]
         []
