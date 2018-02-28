@@ -6,11 +6,13 @@ body {
 }
 
 .gameover {
+    color: white;
     padding: 70px 0;
     border: 3px solid #00d9ff;
     text-align: center;
     margin: 50px;
-    background-color: #b5b5b5;
+    background-color: #24549e;
+    box-shadow: 10px 10px 20px grey;
 }
 
 .gameover button {
@@ -31,8 +33,8 @@ body {
 
 .human {
   position: absolute;
-  top: 3px;
-  left: 5px;
+  top: 17px;
+  left: 20px;
   width: 20px;
   height: 22px;
   background-image: url('daftman-sprite.jpg');

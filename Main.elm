@@ -50,6 +50,7 @@ type alias Model =
     , pause : Bool
     , seed : Random.Seed
     , isGameOver : Bool
+    , score : Float
     }
 
 
@@ -93,6 +94,7 @@ type Enemy
     = SharpE SharpEnemy
     | BomberE BomberEnemy
 
+
 bomber : Enemy -> Maybe BomberEnemy
 bomber enemy =
     case enemy of
@@ -102,11 +104,12 @@ bomber enemy =
         BomberE b ->
             Just b
 
+
 bombers : List Enemy -> List BomberEnemy
 bombers enemies =
-   enemies
-   |> List.map bomber
-   |> Maybe.values
+    enemies
+        |> List.map bomber
+        |> Maybe.values
 
 
 sharpy : Enemy -> Maybe SharpEnemy
@@ -118,11 +121,13 @@ sharpy enemy =
         BomberE _ ->
             Nothing
 
+
 sharpies : List Enemy -> List SharpEnemy
 sharpies enemies =
-   enemies
-   |> List.map sharpy
-   |> Maybe.values
+    enemies
+        |> List.map sharpy
+        |> Maybe.values
+
 
 type alias SharpEnemy =
     { pos : Vec2
@@ -149,20 +154,27 @@ init =
       , pause = False
       , seed = Random.initialSeed 0
       , isGameOver = False
+      , score = 0
       }
     , Task.perform InitialWindowSize Window.size
     )
 
 
+initialBubbleHealth : Int
 initialBubbleHealth =
     10
+
+
+bubbleRadius : Float
+bubbleRadius =
+    60
 
 
 initBubble : Float -> Float -> Bubble
 initBubble x y =
     { pos = vec2 x y
     , speed = 0.5
-    , radius = 30
+    , radius = bubbleRadius
     , animationX = animation x |> from x |> to x
     , animationY = animation y |> from y |> to y
     , powerups = []
@@ -171,6 +183,11 @@ initBubble x y =
     , velocityX = 0
     , velocityY = 0
     }
+
+
+bubbleFromWindowSize : Window.Size -> Bubble
+bubbleFromWindowSize size =
+    initBubble (toFloat (size.width // 2)) (toFloat (size.height // 2))
 
 
 initWindow : Window.Size
@@ -203,7 +220,16 @@ update msg model =
             ( moveBubble pos model, Cmd.none )
 
         KeyPress key ->
-            ( { model | pause = not model.pause }, Cmd.none )
+            if not model.isGameOver then
+                ( { model | pause = not model.pause }, Cmd.none )
+            else
+                ( { model
+                    | pause = not model.pause
+                    , isGameOver = False
+                    , bubble = bubbleFromWindowSize model.window
+                  }
+                , Cmd.none
+                )
 
         Tick delta ->
             ( model
@@ -218,15 +244,12 @@ update msg model =
                 |> checkEnemyCollisions
                 |> timeoutPowerups
                 |> checkGameOver
+                |> updateScore delta
             , Cmd.none
             )
 
         InitialWindowSize size ->
-            let
-                bubbleFromPos pos =
-                    initBubble (toFloat (size.width // 2)) (toFloat (size.height // 2))
-            in
-            ( { model | window = size, bubble = bubbleFromPos size }, Cmd.none )
+            ( { model | window = size, bubble = bubbleFromWindowSize size }, Cmd.none )
 
         WindowResize size ->
             ( { model | window = size }, Cmd.none )
@@ -315,16 +338,20 @@ movePowerup time powerup =
 
 bombCountdown : Time -> Model -> Model
 bombCountdown delta model =
-    { model | enemies = model.enemies
-      |> bombers
-      |> List.map (countdown delta)
-      |> List.map BomberE
-      |> List.append (List.map SharpE (sharpies model.enemies))
+    { model
+        | enemies =
+            model.enemies
+                |> bombers
+                |> List.map (countdown delta)
+                |> List.map BomberE
+                |> List.append (List.map SharpE (sharpies model.enemies))
     }
+
 
 countdown : Time -> BomberEnemy -> BomberEnemy
 countdown delta bomber =
-  {bomber | countdown = bomber.countdown - delta }
+    { bomber | countdown = bomber.countdown - delta }
+
 
 moveEnemies : Time -> Model -> Model
 moveEnemies delta model =
@@ -346,7 +373,8 @@ checkEnemyCollisions model =
 
                         BomberE e ->
                             areCirclesColliding bubble e
-                            && e.countdown < explosionDuration
+                                && e.countdown
+                                < explosionDuration
                 )
                 model.enemies
 
@@ -526,6 +554,9 @@ checkGameOver model =
     else
         model
 
+updateScore : Time -> Model -> Model
+updateScore delta model =
+  { model | score = model.score + delta }
 
 timeoutPowerups : Model -> Model
 timeoutPowerups model =
@@ -721,9 +752,11 @@ generateSharpEnemy time model =
         , enemies = SharpE newEnemy :: model.enemies
     }
 
+
 sharpVelocity : Float
 sharpVelocity =
     0.5
+
 
 bombVelocity : Float
 bombVelocity =
@@ -770,6 +803,7 @@ view model =
     else
         div []
             [ viewHealthbar model.bubble
+            , viewScore model.score
             , viewPlayer model.time model.bubble
             , viewEnemies model.time model.enemies
             , viewPowerups model.time model.powerups
@@ -777,14 +811,15 @@ view model =
 
 
 baseStretch =
-    10
+    30
 
 
 viewGameOverScreen : Model -> Html Msg
 viewGameOverScreen model =
     div []
         [ div [ class "gameover" ]
-            [ button [ onClick StartGame ] [ text "Try Again!" ]
+            [ h1 [] [ text <| "Score: " ++ toString model.score ]
+                , h1 [] [ text "Press Any Key to Try Again" ]
             ]
         ]
 
@@ -798,6 +833,9 @@ viewHealthbar bubble =
     in
     div [ class "healthbar", Html.Attributes.style [ ( "background", "linear-gradient(270deg, red, red " ++ healthPercent ++ "%, white " ++ healthPercent ++ "%)" ) ] ] []
 
+viewScore : Float -> Html Msg
+viewScore score =
+    h2 [ class "score" ] [ text <| toString score ]
 
 viewPlayer : Time -> Bubble -> Html Msg
 viewPlayer time bubble =
@@ -897,17 +935,20 @@ viewEnemy time enemy =
         BomberE e ->
             viewBomberEnemy time e
 
+
 explosionDuration : Time
-explosionDuration = 1 * Time.second
+explosionDuration =
+    1 * Time.second
+
 
 viewBomberEnemy : Time -> BomberEnemy -> Html Msg
 viewBomberEnemy time bomberEnemy =
     let
         boomClass =
-           if bomberEnemy.countdown <= explosionDuration then
-               "explode"
-           else
-               ""
+            if bomberEnemy.countdown <= explosionDuration then
+                "explode"
+            else
+                ""
     in
     div
         [ class <| "bomber " ++ boomClass
