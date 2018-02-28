@@ -1,6 +1,5 @@
 *.swp
 elm-stuff/*
-elm.js
 
 # Travis CI Stuff
 sysconfcpus
