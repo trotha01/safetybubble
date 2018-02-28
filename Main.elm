@@ -576,7 +576,7 @@ timeoutPowerups model =
 
 removeHiddenPowerups : Model -> Model
 removeHiddenPowerups model =
-    { model | powerups = List.filter (isOffScreen model.window) model.powerups }
+    { model | powerups = List.filter (not << (isOffScreen model.window)) model.powerups }
 
 
 removeHiddenEnemies : Model -> Model
