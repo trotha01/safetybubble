@@ -4,7 +4,6 @@ import Animation exposing (..)
 import AnimationFrame
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (..)
 import Keyboard
 import List.Extra as List
 import Math.Vector2 exposing (..)
@@ -818,7 +817,7 @@ viewGameOverScreen : Model -> Html Msg
 viewGameOverScreen model =
     div []
         [ div [ class "gameover" ]
-            [ h1 [] [ text <| "Score: " ++ toString model.score ]
+            [ h1 [] [ text <| "Score: " ++ formatNumber model.score ]
                 , h1 [] [ text "Press Any Key to Try Again" ]
             ]
         ]
@@ -835,7 +834,7 @@ viewHealthbar bubble =
 
 viewScore : Float -> Html Msg
 viewScore score =
-    h2 [ class "score" ] [ text <| toString score ]
+    h2 [ class "score" ] [ text <| formatNumber score ]
 
 viewPlayer : Time -> Bubble -> Html Msg
 viewPlayer time bubble =
@@ -1028,3 +1027,20 @@ enemyGenerator model =
 powerupGenerator : Model -> List (Sub Msg)
 powerupGenerator model =
     [ Time.every (Time.second * 5) (GeneratePowerup MetalBubble) ]
+
+
+-- HELPERS
+formatNumber : Float -> String
+formatNumber n =
+    -- TODO: handle decimal points
+    formatInt (round n)
+
+formatInt : Int -> String
+formatInt n =
+   toString n
+   |> String.reverse
+   |> String.toList
+   |> List.greedyGroupsOf 3
+   |> List.map String.fromList
+   |> String.join ","
+   |> String.reverse
