@@ -18,7 +18,6 @@ import Window
 
 {-| Next Steps
 
-  - Add in bomb enemy collision detection
   - Add in sound effects
   - Better bubble stretch and squeeze
   - Better mouse interruptions
@@ -27,6 +26,50 @@ import Window
   - Fix bubble speedup when metal stops
 
 -}
+
+
+
+-- CONSTANTS
+
+
+initialBubbleHealth : Int
+initialBubbleHealth =
+    10
+
+
+bubbleRadius : Float
+bubbleRadius =
+    60
+
+
+baseStretch : Float
+baseStretch =
+    -- how stretchy is the bubble?
+    30
+
+
+sharpVelocity : Float
+sharpVelocity =
+    -- speed of the sharp enemies
+    0.5
+
+
+bombVelocity : Float
+bombVelocity =
+    -- speed of the bombs
+    0.3
+
+
+explosionDuration : Time
+explosionDuration =
+    -- how long the bomb explosion lasts
+    1 * Time.second
+
+
+
+-- MAIN
+
+
 main =
     Html.program
         { init = init
@@ -53,6 +96,10 @@ type alias Model =
     }
 
 
+
+-- User
+
+
 type alias Bubble =
     { pos : Vec2
     , speed : Float
@@ -65,6 +112,10 @@ type alias Bubble =
     , velocityX : Float
     , velocityY : Float
     }
+
+
+
+-- Powerups
 
 
 type alias StartTime =
@@ -84,6 +135,10 @@ type alias Powerup =
     }
 
 
+
+-- Enemies
+
+
 type EnemyType
     = Sharp
     | Bomber
@@ -92,6 +147,21 @@ type EnemyType
 type Enemy
     = SharpE SharpEnemy
     | BomberE BomberEnemy
+
+
+type alias SharpEnemy =
+    { pos : Vec2
+    , radius : Float
+    , velocity : Vec2
+    }
+
+
+type alias BomberEnemy =
+    { pos : Vec2
+    , radius : Float
+    , velocity : Vec2
+    , countdown : Float
+    }
 
 
 bomber : Enemy -> Maybe BomberEnemy
@@ -128,19 +198,8 @@ sharpies enemies =
         |> Maybe.values
 
 
-type alias SharpEnemy =
-    { pos : Vec2
-    , radius : Float
-    , velocity : Vec2
-    }
 
-
-type alias BomberEnemy =
-    { pos : Vec2
-    , radius : Float
-    , velocity : Vec2
-    , countdown : Float
-    }
+-- Init model
 
 
 init : ( Model, Cmd Msg )
@@ -148,7 +207,7 @@ init =
     ( { bubble = initBubble 0 0
       , enemies = []
       , powerups = []
-      , window = initWindow
+      , window = Window.Size 0 0
       , time = 0
       , pause = False
       , seed = Random.initialSeed 0
@@ -157,16 +216,6 @@ init =
       }
     , Task.perform InitialWindowSize Window.size
     )
-
-
-initialBubbleHealth : Int
-initialBubbleHealth =
-    10
-
-
-bubbleRadius : Float
-bubbleRadius =
-    60
 
 
 initBubble : Float -> Float -> Bubble
@@ -189,24 +238,19 @@ bubbleFromWindowSize size =
     initBubble (toFloat (size.width // 2)) (toFloat (size.height // 2))
 
 
-initWindow : Window.Size
-initWindow =
-    Window.Size 0 0
-
-
 
 -- UPDATE
 
 
 type Msg
-    = Click Mouse.Position
+    = StartGame
+    | Tick Time
+    | Click Mouse.Position
+    | KeyPress Keyboard.KeyCode
     | GenerateEnemy EnemyType Time
     | GeneratePowerup PowerupType Time
-    | Tick Time
     | InitialWindowSize Window.Size
     | WindowResize Window.Size
-    | KeyPress Keyboard.KeyCode
-    | StartGame
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -214,21 +258,6 @@ update msg model =
     case msg of
         StartGame ->
             init
-
-        Click pos ->
-            ( moveBubble pos model, Cmd.none )
-
-        KeyPress key ->
-            if not model.isGameOver then
-                ( { model | pause = not model.pause }, Cmd.none )
-            else
-                ( { model
-                    | pause = not model.pause
-                    , isGameOver = False
-                    , bubble = bubbleFromWindowSize model.window
-                  }
-                , Cmd.none
-                )
 
         Tick delta ->
             ( model
@@ -247,11 +276,16 @@ update msg model =
             , Cmd.none
             )
 
-        InitialWindowSize size ->
-            ( { model | window = size, bubble = bubbleFromWindowSize size }, Cmd.none )
+        Click pos ->
+            ( moveBubble pos model, Cmd.none )
 
-        WindowResize size ->
-            ( { model | window = size }, Cmd.none )
+        KeyPress key ->
+            if not model.isGameOver then
+                -- If not game over, toggle pause
+                ( { model | pause = not model.pause }, Cmd.none )
+            else
+                -- If game over, start over
+                update StartGame model
 
         GenerateEnemy enemyType time ->
             ( generateEnemy enemyType time model, Cmd.none )
@@ -259,10 +293,20 @@ update msg model =
         GeneratePowerup powerup time ->
             ( generatePowerup powerup time model, Cmd.none )
 
+        InitialWindowSize size ->
+            ( { model | window = size, bubble = bubbleFromWindowSize size }, Cmd.none )
+
+        WindowResize size ->
+            ( { model | window = size }, Cmd.none )
+
 
 updateTime : Time -> Model -> Model
 updateTime delta model =
     { model | time = model.time + delta }
+
+
+
+-- Update bubble
 
 
 moveBubble : Mouse.Position -> Model -> Model
@@ -270,38 +314,11 @@ moveBubble pos model =
     { model | bubble = moveTo pos model.time model.bubble }
 
 
-animateBubble : Model -> Model
-animateBubble model =
-    let
-        bubble =
-            model.bubble
-
-        newBubble =
-            { bubble
-                | pos =
-                    vec2 (Animation.animate model.time bubble.animationX)
-                        (Animation.animate model.time bubble.animationY)
-            }
-
-        velocityX =
-            Animation.velocity model.time newBubble.animationX
-
-        velocityY =
-            Animation.velocity model.time newBubble.animationY
-
-        direction =
-            atan2 velocityY velocityX
-
-        newBubble2 =
-            { newBubble | direction = direction, velocityX = velocityX, velocityY = velocityY }
-    in
-    { model | bubble = newBubble2 }
-
-
 moveTo : Mouse.Position -> Time -> Bubble -> Bubble
 moveTo pos time bubble =
     let
         bubbleSpeed =
+            -- If there's a powerup, slow down the bubble
             if List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups then
                 0.1
             else
@@ -321,6 +338,37 @@ moveTo pos time bubble =
     }
 
 
+animateBubble : Model -> Model
+animateBubble model =
+    let
+        bubble =
+            model.bubble
+
+        ( velocityX, velocityY ) =
+            ( Animation.velocity model.time bubble.animationX
+            , Animation.velocity model.time bubble.animationY
+            )
+
+        direction =
+            atan2 velocityY velocityX
+
+        newBubble =
+            { bubble
+                | direction = direction
+                , velocityX = velocityX
+                , velocityY = velocityY
+                , pos =
+                    vec2 (Animation.animate model.time bubble.animationX)
+                        (Animation.animate model.time bubble.animationY)
+            }
+    in
+    { model | bubble = newBubble }
+
+
+
+-- Update powerups
+
+
 movePowerups : Model -> Model
 movePowerups model =
     { model | powerups = List.map (movePowerup model.time) model.powerups }
@@ -335,26 +383,94 @@ movePowerup time powerup =
     }
 
 
-bombCountdown : Time -> Model -> Model
-bombCountdown delta model =
-    { model
-        | enemies =
-            model.enemies
-                |> bombers
-                |> List.map (countdown delta)
-                |> List.map BomberE
-                |> List.append (List.map SharpE (sharpies model.enemies))
-    }
+isBubbleMetal : Bubble -> Bool
+isBubbleMetal bubble =
+    List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups
 
 
-countdown : Time -> BomberEnemy -> BomberEnemy
-countdown delta bomber =
-    { bomber | countdown = bomber.countdown - delta }
+checkPowerupCollisions : Model -> Model
+checkPowerupCollisions model =
+    let
+        bubble =
+            model.bubble
+
+        ( collidingPowerups, nonCollidingPowerups ) =
+            List.partition (areCirclesColliding bubble) model.powerups
+
+        collidingPowerupNames =
+            collidingPowerups
+                |> List.map .type_
+                |> List.map ((,) model.time)
+
+        newBubble =
+            { bubble
+                | powerups =
+                    (collidingPowerupNames ++ bubble.powerups)
+                        |> List.uniqueBy toString
+            }
+    in
+    { model | bubble = newBubble, powerups = nonCollidingPowerups }
+
+
+timeoutPowerups : Model -> Model
+timeoutPowerups model =
+    let
+        bubble =
+            model.bubble
+
+        isPowerupValid ( startTime, powerup ) =
+            -- Powerups are valid for 5 seconds
+            startTime + (5 * Time.second) > model.time
+
+        newBubble =
+            { bubble | powerups = List.filter isPowerupValid bubble.powerups }
+    in
+    { model | bubble = newBubble }
+
+
+removeHiddenPowerups : Model -> Model
+removeHiddenPowerups model =
+    { model | powerups = List.filter (not << isOffScreen model.window) model.powerups }
+
+
+
+-- Update Enemies / Collision detection
 
 
 moveEnemies : Time -> Model -> Model
 moveEnemies delta model =
     { model | enemies = List.map (moveEnemy delta) model.enemies }
+
+
+moveEnemy : Time -> Enemy -> Enemy
+moveEnemy time enemy =
+    case enemy of
+        SharpE e ->
+            SharpE
+                { e | pos = move time e }
+
+        BomberE e ->
+            BomberE
+                { e | pos = move time e }
+
+
+removeHiddenEnemies : Model -> Model
+removeHiddenEnemies model =
+    { model
+        | enemies =
+            List.filter
+                (\e ->
+                    case e of
+                        SharpE e ->
+                            -- keep if on screen
+                            not (isOffScreen model.window e)
+
+                        BomberE e ->
+                            -- keep if explosion not finished
+                            e.countdown > -explosionDuration
+                )
+                model.enemies
+    }
 
 
 checkEnemyCollisions : Model -> Model
@@ -405,145 +521,29 @@ checkEnemyCollisions model =
     { model | bubble = newBubble, enemies = newBombs ++ nonCollidingNonBombs }
 
 
-type alias Position =
-    Vec2
+
+-- Update Bomb Enemy
 
 
-type alias Radius =
-    Float
+bombCountdown : Time -> Model -> Model
+bombCountdown delta model =
+    { model
+        | enemies =
+            model.enemies
+                |> bombers
+                |> List.map (countdown delta)
+                |> List.map BomberE
+                |> List.append (List.map SharpE (sharpies model.enemies))
+    }
 
 
-type alias CollisionResult =
-    { normal : Vec2, penetration : Float }
+countdown : Time -> BomberEnemy -> BomberEnemy
+countdown delta bomber =
+    { bomber | countdown = bomber.countdown - delta }
 
 
-{-| Calculate CollisionResult for two circles
--- takes position vector and radius for each circle
--}
-collideCircles : ( Position, Radius ) -> ( Position, Radius ) -> CollisionResult
-collideCircles ( pos0, radius0 ) ( pos1, radius1 ) =
-    let
-        b0b1 =
-            Math.Vector2.sub pos1 pos0
 
-        radiusb0b1 =
-            radius0 + radius1
-
-        distanceSq =
-            -- simple optimization: doesn't compute sqrt unless necessary
-            Math.Vector2.lengthSquared b0b1
-    in
-    if distanceSq == 0 then
-        -- same position, arbitrary normal
-        CollisionResult (vec2 1 0) radius0
-    else if distanceSq >= radiusb0b1 * radiusb0b1 then
-        -- no intersection, arbitrary normal
-        CollisionResult (vec2 1 0) 0
-    else
-        let
-            d =
-                sqrt distanceSq
-        in
-        CollisionResult (Math.Vector2.scale (1 / d) b0b1) (radiusb0b1 - d)
-
-
-{-| modify bodies' trajectories based off the colision result
--}
-resolveCollision : CollisionResult -> Bubble -> BomberEnemy -> BomberEnemy
-resolveCollision { normal, penetration } bubble bomber =
-    let
-        bubbleVelocity =
-            vec2 bubble.velocityX bubble.velocityY
-
-        ( bomberX, bomberY ) =
-            ( getX bomber.pos, getY bomber.pos )
-
-        relativeVelocity =
-            Math.Vector2.sub bomber.velocity bubbleVelocity
-
-        velocityAlongNormal =
-            Math.Vector2.dot relativeVelocity normal
-
-        ( bubbleInverseMass, bomberInverseMass ) =
-            ( 0.3, 0.3 )
-
-        ( bubbleRestitution, bomberRestitution ) =
-            ( 0.3, 0.3 )
-    in
-    if penetration == 0 || velocityAlongNormal > 0 then
-        bomber
-        -- no collision or velocities separating
-    else
-        let
-            restitution =
-                -- collision restitution
-                Basics.min bubbleRestitution bomberRestitution
-
-            invMassSum =
-                bubbleInverseMass + bomberInverseMass
-
-            j =
-                -- impulse scalar
-                (-(1 + restitution) * velocityAlongNormal) / invMassSum
-
-            impulse =
-                -- impulse vector
-                Math.Vector2.scale j normal
-
-            newBomberVelocity =
-                Math.Vector2.add bomber.velocity (Math.Vector2.scale bomberInverseMass impulse)
-
-            ( bomberToX, bomberToY ) =
-                ( 1000, 1000 )
-        in
-        { bomber | velocity = newBomberVelocity }
-
-
-isBubbleMetal : Bubble -> Bool
-isBubbleMetal bubble =
-    List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups
-
-
-checkPowerupCollisions : Model -> Model
-checkPowerupCollisions model =
-    let
-        bubble =
-            model.bubble
-
-        ( collidingPowerups, nonCollidingPowerups ) =
-            List.partition (areCirclesColliding bubble) model.powerups
-
-        collidingPowerupNames =
-            collidingPowerups
-                |> List.map .type_
-                |> List.map ((,) model.time)
-
-        newBubble =
-            { bubble
-                | powerups =
-                    (collidingPowerupNames ++ bubble.powerups)
-                        |> List.uniqueBy toString
-            }
-    in
-    { model | bubble = newBubble, powerups = nonCollidingPowerups }
-
-
-type alias CollidableCircle a =
-    { a | radius : Float, pos : Vec2 }
-
-
-areCirclesColliding : CollidableCircle a -> CollidableCircle b -> Bool
-areCirclesColliding c1 c2 =
-    let
-        dist =
-            Math.Vector2.sub c1.pos c2.pos
-                |> Math.Vector2.lengthSquared
-                |> sqrt
-
-        rad =
-            c1.radius + c2.radius
-    in
-    dist < rad
+-- Game state updates
 
 
 checkGameOver : Model -> Model
@@ -553,104 +553,14 @@ checkGameOver model =
     else
         model
 
+
 updateScore : Time -> Model -> Model
 updateScore delta model =
-  { model | score = model.score + delta }
-
-timeoutPowerups : Model -> Model
-timeoutPowerups model =
-    let
-        bubble =
-            model.bubble
-
-        isPowerupValid ( startTime, powerup ) =
-            -- Powerups are valid for 5 seconds
-            startTime + (5 * Time.second) > model.time
-
-        newBubble =
-            { bubble | powerups = List.filter isPowerupValid bubble.powerups }
-    in
-    { model | bubble = newBubble }
+    { model | score = model.score + delta }
 
 
-removeHiddenPowerups : Model -> Model
-removeHiddenPowerups model =
-    { model | powerups = List.filter (not << (isOffScreen model.window)) model.powerups }
 
-
-removeHiddenEnemies : Model -> Model
-removeHiddenEnemies model =
-    { model
-        | enemies =
-            List.filter
-                (\e ->
-                    case e of
-                        SharpE e ->
-                            -- keep if on screen
-                            not (isOffScreen model.window e)
-
-                        BomberE e ->
-                            -- keep if explosion not finished
-                            e.countdown > -explosionDuration
-                )
-                model.enemies
-    }
-
-
-type alias Animated a =
-    { a
-        | animationX : Animation
-        , animationY : Animation
-    }
-
-
-isOffScreen : Window.Size -> { a | pos : Vec2 } -> Bool
-isOffScreen window object =
-    let
-        ( x, y ) =
-            ( getX object.pos, getY object.pos )
-    in
-    x < -60 || x > toFloat window.width || y < -60 || y > toFloat window.height
-
-
-isStillAnimating : Time -> Animated a -> Bool
-isStillAnimating time animated =
-    not (Animation.isDone time animated.animationX)
-        || not (Animation.isDone time animated.animationY)
-
-
-animationEndTime : Animated a -> Time
-animationEndTime animated =
-    Basics.max (Animation.getStart animated.animationX + Animation.getDuration animated.animationX) (Animation.getStart animated.animationY + Animation.getDuration animated.animationY)
-
-
-moveEnemy : Time -> Enemy -> Enemy
-moveEnemy time enemy =
-    case enemy of
-        SharpE e ->
-            SharpE
-                { e | pos = move time e }
-
-        BomberE e ->
-            BomberE
-                { e | pos = move time e }
-
-
-{-| move takes a time delta and an object with a position and velocity
-and returns the new position
--}
-move : Time -> { a | pos : Vec2, velocity : Vec2 } -> Vec2
-move delta object =
-    -- p1 = p2 + v*t
-    add object.pos (scale delta object.velocity)
-
-
-sharpEnemySpeed =
-    0.1
-
-
-powerupSpeed =
-    0.05
+-- GENERATORS
 
 
 generatePointOutsideWindow : ( Float, Float ) -> Random.Generator ( Float, Float )
@@ -676,14 +586,6 @@ generatePointOutsideWindow ( width, height ) =
         )
         Random.bool
         Random.bool
-
-
-generatePointInsideWindow : ( Float, Float ) -> Random.Generator ( Float, Float )
-generatePointInsideWindow ( width, height ) =
-    Random.map2
-        (,)
-        (Random.float 15 (width - 15))
-        (Random.float 15 (height - 15))
 
 
 generatePowerup : PowerupType -> Time -> Model -> Model
@@ -752,16 +654,6 @@ generateSharpEnemy time model =
     }
 
 
-sharpVelocity : Float
-sharpVelocity =
-    0.5
-
-
-bombVelocity : Float
-bombVelocity =
-    0.3
-
-
 generateBomberEnemy : Time -> Model -> Model
 generateBomberEnemy time model =
     let
@@ -809,16 +701,12 @@ view model =
             ]
 
 
-baseStretch =
-    30
-
-
 viewGameOverScreen : Model -> Html Msg
 viewGameOverScreen model =
     div []
         [ div [ class "gameover" ]
             [ h1 [] [ text <| "Score: " ++ formatNumber model.score ]
-                , h1 [] [ text "Press Any Key to Try Again" ]
+            , h1 [] [ text "Press Any Key to Try Again" ]
             ]
         ]
 
@@ -832,9 +720,11 @@ viewHealthbar bubble =
     in
     div [ class "healthbar", Html.Attributes.style [ ( "background", "linear-gradient(270deg, red, red " ++ healthPercent ++ "%, white " ++ healthPercent ++ "%)" ) ] ] []
 
+
 viewScore : Float -> Html Msg
 viewScore score =
     h2 [ class "score" ] [ text <| formatNumber score ]
+
 
 viewPlayer : Time -> Bubble -> Html Msg
 viewPlayer time bubble =
@@ -935,11 +825,6 @@ viewEnemy time enemy =
             viewBomberEnemy time e
 
 
-explosionDuration : Time
-explosionDuration =
-    1 * Time.second
-
-
 viewBomberEnemy : Time -> BomberEnemy -> Html Msg
 viewBomberEnemy time bomberEnemy =
     let
@@ -965,14 +850,13 @@ viewSharpEnemy : Time -> SharpEnemy -> Html Msg
 viewSharpEnemy time sharpEnemy =
     let
         directionVector =
-            -- Math.Vector2.direction (vec2 p1x p1y) (vec2 p2x p2y)
             sharpEnemy.velocity
 
         vectorAngle =
             atan2 (Math.Vector2.getY directionVector) (Math.Vector2.getX directionVector)
 
         correction =
-            -- we add a correct to the angle since the emoji sword is already angled
+            -- we add a correction to the angle since the emoji sword is already angled
             pi + 0.6
 
         direction =
@@ -990,17 +874,13 @@ viewSharpEnemy time sharpEnemy =
         [ Html.text "🗡️" ]
 
 
-px : Float -> String
-px x =
-    toString x ++ "px"
-
-
 
 -- SUBSCRIPTIONS
 
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
+    --- only listen to keypresses if the game is paused or over
     if model.pause || model.isGameOver then
         Sub.batch
             [ Keyboard.presses KeyPress
@@ -1029,18 +909,169 @@ powerupGenerator model =
     [ Time.every (Time.second * 5) (GeneratePowerup MetalBubble) ]
 
 
+
 -- HELPERS
+
+
+px : Float -> String
+px x =
+    toString x ++ "px"
+
+
 formatNumber : Float -> String
 formatNumber n =
     -- TODO: handle decimal points
     formatInt (round n)
 
+
 formatInt : Int -> String
 formatInt n =
-   toString n
-   |> String.reverse
-   |> String.toList
-   |> List.greedyGroupsOf 3
-   |> List.map String.fromList
-   |> String.join ","
-   |> String.reverse
+    toString n
+        |> String.reverse
+        |> String.toList
+        |> List.greedyGroupsOf 3
+        |> List.map String.fromList
+        |> String.join ","
+        |> String.reverse
+
+
+isOffScreen : Window.Size -> { a | pos : Vec2 } -> Bool
+isOffScreen window object =
+    let
+        ( x, y ) =
+            ( getX object.pos, getY object.pos )
+    in
+    x < -60 || x > toFloat window.width || y < -60 || y > toFloat window.height
+
+
+
+-- Collision detection (and resolution for bombs)
+
+
+type alias Position =
+    Vec2
+
+
+type alias Radius =
+    Float
+
+
+type alias CollisionResult =
+    { normal : Vec2, penetration : Float }
+
+
+type alias CollidableCircle a =
+    { a | radius : Float, pos : Vec2 }
+
+
+areCirclesColliding : CollidableCircle a -> CollidableCircle b -> Bool
+areCirclesColliding c1 c2 =
+    let
+        dist =
+            Math.Vector2.sub c1.pos c2.pos
+                |> Math.Vector2.lengthSquared
+                |> sqrt
+
+        rad =
+            c1.radius + c2.radius
+    in
+    dist < rad
+
+
+{-| move takes a time delta and an object with a position and velocity
+and returns the new position
+-}
+move : Time -> { a | pos : Vec2, velocity : Vec2 } -> Vec2
+move delta object =
+    -- p1 = p2 + v*t
+    add object.pos (scale delta object.velocity)
+
+
+sharpEnemySpeed =
+    0.1
+
+
+powerupSpeed =
+    0.05
+
+
+{-| Calculate CollisionResult for two circles
+-- takes position vector and radius for each circle
+-}
+collideCircles : ( Position, Radius ) -> ( Position, Radius ) -> CollisionResult
+collideCircles ( pos0, radius0 ) ( pos1, radius1 ) =
+    let
+        b0b1 =
+            Math.Vector2.sub pos1 pos0
+
+        radiusb0b1 =
+            radius0 + radius1
+
+        distanceSq =
+            -- simple optimization: doesn't compute sqrt unless necessary
+            Math.Vector2.lengthSquared b0b1
+    in
+    if distanceSq == 0 then
+        -- same position, arbitrary normal
+        CollisionResult (vec2 1 0) radius0
+    else if distanceSq >= radiusb0b1 * radiusb0b1 then
+        -- no intersection, arbitrary normal
+        CollisionResult (vec2 1 0) 0
+    else
+        let
+            d =
+                sqrt distanceSq
+        in
+        CollisionResult (Math.Vector2.scale (1 / d) b0b1) (radiusb0b1 - d)
+
+
+{-| modify bodies' trajectories based off the colision result
+-}
+resolveCollision : CollisionResult -> Bubble -> BomberEnemy -> BomberEnemy
+resolveCollision { normal, penetration } bubble bomber =
+    let
+        bubbleVelocity =
+            vec2 bubble.velocityX bubble.velocityY
+
+        ( bomberX, bomberY ) =
+            ( getX bomber.pos, getY bomber.pos )
+
+        relativeVelocity =
+            Math.Vector2.sub bomber.velocity bubbleVelocity
+
+        velocityAlongNormal =
+            Math.Vector2.dot relativeVelocity normal
+
+        ( bubbleInverseMass, bomberInverseMass ) =
+            ( 0.3, 0.3 )
+
+        ( bubbleRestitution, bomberRestitution ) =
+            ( 0.3, 0.3 )
+    in
+    if penetration == 0 || velocityAlongNormal > 0 then
+        bomber
+        -- no collision or velocities separating
+    else
+        let
+            restitution =
+                -- collision restitution
+                Basics.min bubbleRestitution bomberRestitution
+
+            invMassSum =
+                bubbleInverseMass + bomberInverseMass
+
+            j =
+                -- impulse scalar
+                (-(1 + restitution) * velocityAlongNormal) / invMassSum
+
+            impulse =
+                -- impulse vector
+                Math.Vector2.scale j normal
+
+            newBomberVelocity =
+                Math.Vector2.add bomber.velocity (Math.Vector2.scale bomberInverseMass impulse)
+
+            ( bomberToX, bomberToY ) =
+                ( 1000, 1000 )
+        in
+        { bomber | velocity = newBomberVelocity }
