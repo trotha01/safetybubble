@@ -31,4 +31,4 @@ chmod 755 butler
 # zip relevant files
 zip -v safetybubble.zip *.html *.css *.js
 
-butler push safetybubble.zip trotha01/safety-bubble
+./butler push safetybubble.zip trotha01/safety-bubble
