@@ -29,6 +29,6 @@ curl https://dl.itch.ovh/butler/linux-amd64/head/butler --output butler
 chmod 755 butler
 
 # zip relevant files
-zip -v safetybubble.zip *.html *.css *.js
+zip -v safetybubble.zip *.html *.css *.js daftman-sprite.jpg
 
 ./butler push safetybubble.zip trotha01/safety-bubble:HTML5
