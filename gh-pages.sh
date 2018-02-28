@@ -26,7 +26,7 @@ git push --force "https://${GITHUB_TOKEN}@github.com/trotha01/safetybubble.git" 
 
 # download butler
 curl https://dl.itch.ovh/butler/linux-amd64/head/butler --output butler
-chmod 755 ~/bin/butler
+chmod 755 butler
 
 # zip relevant files
 zip -v safetybubble.zip *.html *.css *.js
