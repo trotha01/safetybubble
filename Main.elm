@@ -2,19 +2,18 @@ module Main exposing (..)
 
 import Animation exposing (..)
 import AnimationFrame
-import Ease
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Keyboard
-import List.Extra
+import List.Extra as List
 import Math.Vector2 exposing (..)
+import Maybe.Extra as Maybe
 import Mouse
 import Random
 import Random.Extra as Random
 import Task
 import Time exposing (..)
-import Tuple
 import Window
 
 
@@ -94,20 +93,49 @@ type Enemy
     = SharpE SharpEnemy
     | BomberE BomberEnemy
 
+bomber : Enemy -> Maybe BomberEnemy
+bomber enemy =
+    case enemy of
+        SharpE _ ->
+            Nothing
+
+        BomberE b ->
+            Just b
+
+bombers : List Enemy -> List BomberEnemy
+bombers enemies =
+   enemies
+   |> List.map bomber
+   |> Maybe.values
+
+
+sharpy : Enemy -> Maybe SharpEnemy
+sharpy enemy =
+    case enemy of
+        SharpE e ->
+            Just e
+
+        BomberE _ ->
+            Nothing
+
+sharpies : List Enemy -> List SharpEnemy
+sharpies enemies =
+   enemies
+   |> List.map sharpy
+   |> Maybe.values
 
 type alias SharpEnemy =
     { pos : Vec2
-    , animationX : Animation
-    , animationY : Animation
     , radius : Float
+    , velocity : Vec2
     }
 
 
 type alias BomberEnemy =
     { pos : Vec2
-    , animationX : Animation
-    , animationY : Animation
     , radius : Float
+    , velocity : Vec2
+    , countdown : Float
     }
 
 
@@ -145,6 +173,7 @@ initBubble x y =
     }
 
 
+initWindow : Window.Size
 initWindow =
     Window.Size 0 0
 
@@ -180,7 +209,8 @@ update msg model =
             ( model
                 |> updateTime delta
                 |> animateBubble
-                |> moveEnemies
+                |> moveEnemies delta
+                |> bombCountdown delta
                 |> movePowerups
                 |> removeHiddenEnemies
                 |> removeHiddenPowerups
@@ -248,20 +278,6 @@ animateBubble model =
 
 moveTo : Mouse.Position -> Time -> Bubble -> Bubble
 moveTo pos time bubble =
-    {-
-       -- TODO: smoother interruptions
-          if
-              Animation.isRunning time bubble.animationX
-                  || Animation.isRunning time bubble.animationY
-          then
-              { bubble
-                  | animationX =
-                      retarget time (toFloat pos.x) bubble.animationX
-                  , animationY =
-                      retarget time (toFloat pos.y) bubble.animationY
-              }
-          else
-    -}
     let
         bubbleSpeed =
             if List.any (\( startTime, powerup ) -> powerup == MetalBubble) bubble.powerups then
@@ -297,9 +313,22 @@ movePowerup time powerup =
     }
 
 
-moveEnemies : Model -> Model
-moveEnemies model =
-    { model | enemies = List.map (moveEnemy model.time) model.enemies }
+bombCountdown : Time -> Model -> Model
+bombCountdown delta model =
+    { model | enemies = model.enemies
+      |> bombers
+      |> List.map (countdown delta)
+      |> List.map BomberE
+      |> List.append (List.map SharpE (sharpies model.enemies))
+    }
+
+countdown : Time -> BomberEnemy -> BomberEnemy
+countdown delta bomber =
+  {bomber | countdown = bomber.countdown - delta }
+
+moveEnemies : Time -> Model -> Model
+moveEnemies delta model =
+    { model | enemies = List.map (moveEnemy delta) model.enemies }
 
 
 checkEnemyCollisions : Model -> Model
@@ -317,8 +346,25 @@ checkEnemyCollisions model =
 
                         BomberE e ->
                             areCirclesColliding bubble e
+                            && e.countdown < explosionDuration
                 )
                 model.enemies
+
+        collidedBombs =
+            List.map bomber nonCollidingEnemies
+                |> Maybe.values
+
+        nonCollidingNonBombs =
+            List.map sharpy nonCollidingEnemies
+                |> Maybe.values
+                |> List.map SharpE
+
+        newBombs =
+            collidedBombs
+                |> List.map (\b -> collideCircles ( bubble.pos, bubble.radius ) ( b.pos, b.radius ))
+                |> List.zip collidedBombs
+                |> List.map (\( bomb, res ) -> resolveCollision res bubble bomb)
+                |> List.map BomberE
 
         newBubble =
             { bubble
@@ -329,7 +375,101 @@ checkEnemyCollisions model =
                         bubble.health - List.length collidingEnemies
             }
     in
-    { model | bubble = newBubble, enemies = nonCollidingEnemies }
+    { model | bubble = newBubble, enemies = newBombs ++ nonCollidingNonBombs }
+
+
+type alias Position =
+    Vec2
+
+
+type alias Radius =
+    Float
+
+
+type alias CollisionResult =
+    { normal : Vec2, penetration : Float }
+
+
+{-| Calculate CollisionResult for two circles
+-- takes position vector and radius for each circle
+-}
+collideCircles : ( Position, Radius ) -> ( Position, Radius ) -> CollisionResult
+collideCircles ( pos0, radius0 ) ( pos1, radius1 ) =
+    let
+        b0b1 =
+            Math.Vector2.sub pos1 pos0
+
+        radiusb0b1 =
+            radius0 + radius1
+
+        distanceSq =
+            -- simple optimization: doesn't compute sqrt unless necessary
+            Math.Vector2.lengthSquared b0b1
+    in
+    if distanceSq == 0 then
+        -- same position, arbitrary normal
+        CollisionResult (vec2 1 0) radius0
+    else if distanceSq >= radiusb0b1 * radiusb0b1 then
+        -- no intersection, arbitrary normal
+        CollisionResult (vec2 1 0) 0
+    else
+        let
+            d =
+                sqrt distanceSq
+        in
+        CollisionResult (Math.Vector2.scale (1 / d) b0b1) (radiusb0b1 - d)
+
+
+{-| modify bodies' trajectories based off the colision result
+-}
+resolveCollision : CollisionResult -> Bubble -> BomberEnemy -> BomberEnemy
+resolveCollision { normal, penetration } bubble bomber =
+    let
+        bubbleVelocity =
+            vec2 bubble.velocityX bubble.velocityY
+
+        ( bomberX, bomberY ) =
+            ( getX bomber.pos, getY bomber.pos )
+
+        relativeVelocity =
+            Math.Vector2.sub bomber.velocity bubbleVelocity
+
+        velocityAlongNormal =
+            Math.Vector2.dot relativeVelocity normal
+
+        ( bubbleInverseMass, bomberInverseMass ) =
+            ( 0.3, 0.3 )
+
+        ( bubbleRestitution, bomberRestitution ) =
+            ( 0.3, 0.3 )
+    in
+    if penetration == 0 || velocityAlongNormal > 0 then
+        bomber
+        -- no collision or velocities separating
+    else
+        let
+            restitution =
+                -- collision restitution
+                Basics.min bubbleRestitution bomberRestitution
+
+            invMassSum =
+                bubbleInverseMass + bomberInverseMass
+
+            j =
+                -- impulse scalar
+                (-(1 + restitution) * velocityAlongNormal) / invMassSum
+
+            impulse =
+                -- impulse vector
+                Math.Vector2.scale j normal
+
+            newBomberVelocity =
+                Math.Vector2.add bomber.velocity (Math.Vector2.scale bomberInverseMass impulse)
+
+            ( bomberToX, bomberToY ) =
+                ( 1000, 1000 )
+        in
+        { bomber | velocity = newBomberVelocity }
 
 
 isBubbleMetal : Bubble -> Bool
@@ -355,7 +495,7 @@ checkPowerupCollisions model =
             { bubble
                 | powerups =
                     (collidingPowerupNames ++ bubble.powerups)
-                        |> List.Extra.uniqueBy toString
+                        |> List.uniqueBy toString
             }
     in
     { model | bubble = newBubble, powerups = nonCollidingPowerups }
@@ -405,7 +545,7 @@ timeoutPowerups model =
 
 removeHiddenPowerups : Model -> Model
 removeHiddenPowerups model =
-    { model | powerups = List.filter (isStillAnimating model.time) model.powerups }
+    { model | powerups = List.filter (isOffScreen model.window) model.powerups }
 
 
 removeHiddenEnemies : Model -> Model
@@ -416,13 +556,12 @@ removeHiddenEnemies model =
                 (\e ->
                     case e of
                         SharpE e ->
-                            -- keep if still moving
-                            isStillAnimating model.time e
+                            -- keep if on screen
+                            not (isOffScreen model.window e)
 
                         BomberE e ->
-                            -- keep if we're still within the explosion window
-                            -- (end animatino time + 5 seconds)
-                            (animationEndTime e + (2 * Time.second)) > model.time
+                            -- keep if explosion not finished
+                            e.countdown > -explosionDuration
                 )
                 model.enemies
     }
@@ -433,6 +572,15 @@ type alias Animated a =
         | animationX : Animation
         , animationY : Animation
     }
+
+
+isOffScreen : Window.Size -> { a | pos : Vec2 } -> Bool
+isOffScreen window object =
+    let
+        ( x, y ) =
+            ( getX object.pos, getY object.pos )
+    in
+    x < -60 || x > toFloat window.width || y < -60 || y > toFloat window.height
 
 
 isStillAnimating : Time -> Animated a -> Bool
@@ -451,19 +599,20 @@ moveEnemy time enemy =
     case enemy of
         SharpE e ->
             SharpE
-                { e
-                    | pos =
-                        vec2 (Animation.animate time e.animationX)
-                            (Animation.animate time e.animationY)
-                }
+                { e | pos = move time e }
 
         BomberE e ->
             BomberE
-                { e
-                    | pos =
-                        vec2 (Animation.animate time e.animationX)
-                            (Animation.animate time e.animationY)
-                }
+                { e | pos = move time e }
+
+
+{-| move takes a time delta and an object with a position and velocity
+and returns the new position
+-}
+move : Time -> { a | pos : Vec2, velocity : Vec2 } -> Vec2
+move delta object =
+    -- p1 = p2 + v*t
+    add object.pos (scale delta object.velocity)
 
 
 sharpEnemySpeed =
@@ -554,20 +703,31 @@ generateSharpEnemy time model =
         ( ( fromX, fromY ), seed2 ) =
             Random.step pointGen model.seed
 
-        ( ( toX, toY ), seed3 ) =
-            Random.step pointGen seed2
+        ( toVec, seed3 ) =
+            ( model.bubble.pos, seed2 )
+
+        velocity =
+            direction toVec (vec2 fromX fromY)
+                |> scale sharpVelocity
 
         newEnemy =
             { pos = vec2 fromX fromY
-            , animationX = animation model.time |> from fromX |> to toX |> speed sharpEnemySpeed
-            , animationY = animation model.time |> from fromY |> to toY |> speed sharpEnemySpeed
             , radius = 20
+            , velocity = velocity
             }
     in
     { model
         | seed = seed3
         , enemies = SharpE newEnemy :: model.enemies
     }
+
+sharpVelocity : Float
+sharpVelocity =
+    0.5
+
+bombVelocity : Float
+bombVelocity =
+    0.3
 
 
 generateBomberEnemy : Time -> Model -> Model
@@ -576,20 +736,21 @@ generateBomberEnemy time model =
         outsidePointGen =
             generatePointOutsideWindow ( toFloat model.window.width, toFloat model.window.height )
 
-        insidePointGen =
-            generatePointInsideWindow ( toFloat model.window.width, toFloat model.window.height )
-
         ( ( fromX, fromY ), seed2 ) =
             Random.step outsidePointGen model.seed
 
-        ( ( toX, toY ), seed3 ) =
-            Random.step insidePointGen seed2
+        ( toVec, seed3 ) =
+            ( model.bubble.pos, seed2 )
+
+        velocity =
+            direction toVec (vec2 fromX fromY)
+                |> scale bombVelocity
 
         newEnemy =
             { pos = vec2 fromX fromY
-            , animationX = animation model.time |> from fromX |> to toX |> duration (5 * Time.second)
-            , animationY = animation model.time |> from fromY |> to toY |> duration (5 * Time.second)
             , radius = 20
+            , velocity = velocity
+            , countdown = 2 * Time.second
             }
     in
     { model
@@ -623,8 +784,7 @@ viewGameOverScreen : Model -> Html Msg
 viewGameOverScreen model =
     div []
         [ div [ class "gameover" ]
-            [ h1 [] [ text "You Died" ]
-            , button [ onClick StartGame ] [ text "Try Again!" ]
+            [ button [ onClick StartGame ] [ text "Try Again!" ]
             ]
         ]
 
@@ -737,15 +897,17 @@ viewEnemy time enemy =
         BomberE e ->
             viewBomberEnemy time e
 
+explosionDuration : Time
+explosionDuration = 1 * Time.second
 
 viewBomberEnemy : Time -> BomberEnemy -> Html Msg
 viewBomberEnemy time bomberEnemy =
     let
         boomClass =
-            if isStillAnimating time bomberEnemy then
-                ""
-            else
-                "countdown"
+           if bomberEnemy.countdown <= explosionDuration then
+               "explode"
+           else
+               ""
     in
     div
         [ class <| "bomber " ++ boomClass
@@ -762,25 +924,16 @@ viewBomberEnemy time bomberEnemy =
 viewSharpEnemy : Time -> SharpEnemy -> Html Msg
 viewSharpEnemy time sharpEnemy =
     let
-        ( p1x, p1y ) =
-            ( Animation.getFrom sharpEnemy.animationX
-            , Animation.getFrom sharpEnemy.animationY
-            )
-
-        ( p2x, p2y ) =
-            ( Animation.getTo sharpEnemy.animationX
-            , Animation.getTo sharpEnemy.animationY
-            )
-
         directionVector =
-            Math.Vector2.direction (vec2 p1x p1y) (vec2 p2x p2y)
+            -- Math.Vector2.direction (vec2 p1x p1y) (vec2 p2x p2y)
+            sharpEnemy.velocity
 
         vectorAngle =
             atan2 (Math.Vector2.getY directionVector) (Math.Vector2.getX directionVector)
 
         correction =
             -- we add a correct to the angle since the emoji sword is already angled
-            0.6
+            pi + 0.6
 
         direction =
             vectorAngle + correction
@@ -827,7 +980,7 @@ subscriptions model =
 enemyGenerator : Model -> List (Sub Msg)
 enemyGenerator model =
     [ Time.every (Time.second * 0.5) (GenerateEnemy Sharp)
-    , Time.every (Time.second * 5) (GenerateEnemy Bomber)
+    , Time.every (Time.second * 3) (GenerateEnemy Bomber)
     ]
 
 
