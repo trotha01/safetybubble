@@ -21,3 +21,14 @@ git add .
 git status
 git commit -m "Deploy to GitHub Pages [skip ci]"
 git push --force "https://${GITHUB_TOKEN}@github.com/trotha01/safetybubble.git" gh-pages
+
+# Upload to itch.io
+
+# download butler
+curl https://dl.itch.ovh/butler/linux-amd64/head/butler --output butler
+chmod 755 ~/bin/butler
+
+# zip relevant files
+zip -v safetybubble.zip *.html *.css *.js
+
+butler push safetybubble.zip trotha01/safety-bubble
